@@ -2,6 +2,7 @@ from __future__ import annotations
 import MySQLdb
 import MySQLdb.connections
 from typing import *
+import weakref
 
 OperationalError = MySQLdb.connections.OperationalError
 ProgrammingError = MySQLdb.connections.ProgrammingError
@@ -104,7 +105,7 @@ class Select():
         new_select.__setattr__ = self._immutable_err
         return new_select
 
-    def _pack_object(self, data_row):
+    def _pack_object(self, data_row, auto_join):
         write_output_index = 0
         current_index = 0
         output = self._JoinResult()
@@ -124,22 +125,25 @@ class Select():
                 item = out_type()
                 val_access_list = out_type.get_val_access_fields()
                 for i in range(len(val_access_list)):
-                    if isinstance(out_type._column_list[i][1], type) and issubclass(out_type._column_list[i][1], Resource):
-                        data = out_type._column_list[i][1].select("id = %s", data_row[current_index])
-                        if (len(data) > 0):
-                            data = data[0]
-                        else:
-                            data = None
+                    if auto_join and isinstance(out_type._column_list[i][1], type) and issubclass(out_type._column_list[i][1], Resource):
+                        data = out_type._column_list[i][1]._loaded_items.get(data_row[current_index])
+                        if data is None:
+                            data = out_type._column_list[i][1].select("id = %s", data_row[current_index])
+                            if (len(data) > 0):
+                                data = data[0]
+                            else:
+                                data = None
                     else:
                         data = data_row[current_index]
                     item.__setattr__(val_access_list[i], data)
                     current_index += 1
                 item._set_id(item_id)
                 output.__setattr__(out_name, item)
+                out_type._loaded_items[item_id] = item
                 write_output_index += 1
         return output
 
-    def fetch(self, where_clause: str = "TRUE", *args) -> List(Any):
+    def fetch(self, where_clause: str = "TRUE", *args, auto_join=False) -> List(Any):
         data = _db_execute("SELECT {} {} WHERE {} {} {} {};".format(
             self.__select_str,
             self.__join_str,
@@ -150,7 +154,7 @@ class Select():
         ), *args)
         output = [None for _ in data]
         for i in range(len(data)):
-            output[i] = self._pack_object(data[i])
+            output[i] = self._pack_object(data[i], auto_join)
         return output
 
     def fetchone(self, where_clause: str = "TRUE", *args):
@@ -296,13 +300,8 @@ class Resource:
 
     @classmethod
     @uses_db
-    def select(cls, where_clause, *args) -> List[Any]:
-        print(where_clause, args)
-        result = cls._selector.fetch(where_clause, *args)
-        data = [None] * len(result)
-        for i in range(len(result)):
-            data[i] = result.__getattribute__(cls.__name__)
-        return
+    def select(cls, where_clause, *args, auto_join=False) -> List[Any]:
+        raise Exception("can not operate on class Resource")
 
     @uses_db
     def insert(self):
@@ -343,18 +342,9 @@ def _add_accessors(cls_dict, name):
 def _add_statements(class_dict, table_name, val_list, val_access_list):
     @classmethod
     @uses_db
-    def select_template(cls, where_clause = "TRUE", *args):
-        data = cls._selector.fetch(where_clause, *args)
+    def select_template(cls, where_clause = "TRUE", *args, auto_join=False):
+        data = cls._selector.fetch(where_clause, *args, auto_join=auto_join)
         out_list = [item.__getattribute__(cls.__name__) for item in data]
-        for item in out_list:
-            for i in range(len(cls._column_list)):
-                if isinstance(cls._column_list[i][1], type) and issubclass(cls._column_list[i][1], Resource):
-                    cl_name = "__" + cls._column_list[i][0]
-                    output = cls._column_list[i][1].select("id = %s", item.__getattribute__(cl_name))
-                    if len(output) > 0:
-                        item.__setattr__(cl_name, output[0])
-                    else:
-                        item.__setattr__(cl_name, None)
         return out_list
     @uses_db
     def insert_template(self):
@@ -367,11 +357,13 @@ def _add_statements(class_dict, table_name, val_list, val_access_list):
                 values[i] = values[i].id
         _db_execute("INSERT INTO {0}({1}) VALUES(%s{2});".format(table_name, val_list, ", %s" * (len(values) - 1)), *tuple(values))
         self._id = _db_execute("SELECT LAST_INSERT_ID();")[0][0]
+        type(self)._loaded_items[self._id] = self
         return self
     @uses_db
     def delete_template(self):
         _db_execute("DELETE FROM {0} WHERE id = %s;".format(table_name), self.id)
         self._id = 0
+        del type(self)._loaded_items[self._id]
     """
     @uses_db
     def push_template(self, push_on=("id")):
@@ -384,6 +376,7 @@ def _add_statements(class_dict, table_name, val_list, val_access_list):
     class_dict["select"] = select_template
     class_dict["insert"] = insert_template
     class_dict["delete"] = delete_template
+    class_dict["_loaded_items"] = weakref.WeakValueDictionary()
     #class_dict["push"] = push_template
 
 def _create_table(table_name, column_list):
@@ -454,10 +447,14 @@ def _make_type_from_desc(table, cls):
     @uses_db
     def wipe_template(cls, where_clause=None, *args):
         if where_clause is None:
+            cls._loaded_items.clear()
             _db_execute("DELETE FROM {0};".format(cls.__name__))
             _db_execute("ALTER TABLE {0} AUTO_INCREMENT = 1;".format(cls.__name__))
         else:
             _db_execute("DELETE FROM {0} WHERE {1};".format(cls.__name__, where_clause), *args)
+            for item in cls._loaded_items.items():
+                if cls.selector().fetchone("id = %s", item) is None:
+                    del cls._loaded_items[item.id]
     def __eq__template(self, item):
         if type(self) != type(item):
             return False

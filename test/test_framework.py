@@ -1,15 +1,18 @@
 from typing import *
 import traceback
 import os
+from inspect import getframeinfo, stack
 
 __test_cases = []
 
 class TestAssertionFailedException(Exception):
-    def __init__(self, *args):
-        super(self, *args)
-
-def __arg_appender(*args, **kwargs):
-    __test_args.append((args, kwargs))
+    def __init__(self, message: str):
+        caller = getframeinfo(stack()[2][0])
+        self.message = "in file {} line {} {}".format(caller.filename, caller.lineno, message)
+        super().__init__(self, self.message)
+    
+    def __str__(self):
+        return self.message
 
 def test(test_method: Callable) -> None:
     __test_cases.append(test_method)
@@ -37,11 +40,15 @@ def run_test():
         except TestAssertionFailedException as e:
             os.write(1, b"\033[91m[ERROR]\033[0m")
             print("[Test {}/{} failed with assertion]".format(tests_passed, len(__test_cases)))
+            os.write(1, b"\033[91m[ERROR]\033[0m")
+            print(e)
         except Exception as e:
             e_str = traceback.format_exc()
             print(e_str.strip("\n"))
             os.write(1, b"\033[91m[ERROR]\033[0m")
             print("[Test {}/{} failed with exception]".format(tests_passed, len(__test_cases)))
+            os.write(1, b"\033[91m[ERROR]\033[0m")
+            print(e)
     if tests_passed == len(__test_cases):
         message = "great job!"
     elif tests_passed / len(__test_cases) >= 0.8 or (tests_passed + 1 == len(__test_cases) and len(__test_cases) > 1):
