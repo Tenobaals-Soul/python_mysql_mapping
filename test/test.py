@@ -1,52 +1,99 @@
-from test_framework import *
+from test_engine import *
 
 import sys
 sys.path.append("..")
 sys.path.append("src")
 from mysql_mapping import *
 
-config["host"] = "127.0.0.1"
-config["user"] = "root"
-config["password"] = "empty"
-config["database"] = "python_mysql_mapping_test"
-
-tables = []
+db_config["host"] = "127.0.0.1"
+db_config["user"] = "root"
+db_config["password"] = "empty"
+db_config["database"] = "python_mysql_mapping_test"
 
 @test
 @uses_db
-def example_test():
-    #enable_sql_logging()
-    class MyTable(Resource):
-        name=VARCHAR(128)
-        def __str__(self):
-            return "(name={})".format(self.name)
-    tables.append(MyTable)
-    class MyOtherTable(Resource):
-        name=VARCHAR(128)
-        ref=MyTable
-        def __str__(self):
-            return "(name={}, ref={})".format(self.name, self.ref)
-    tables.append(MyOtherTable)
-    MyOtherTable(
-        name="hola",
-        ref=MyTable(
-            name="hello"
-        )
-    ).insert()
+def insert_test():
+    try:
+        class MyTable(Resource):
+            name=VARCHAR(128)
+            enum_val = ENUM("HELLO", "BYE")
+            def __str__(self):
+                return "(name={})".format(self.name)
+        class MyOtherTable(Resource):
+            name=VARCHAR(128)
+            ref=MyTable
+            def __str__(self):
+                return "(name={}, ref={})".format(self.name, self.ref)
+        MyOtherTable(
+            name="hola",
+            ref=MyTable(
+                enum_val="HELLO",
+                name="hello"
+            )
+        ).insert()
+    except Exception as e:
+        raise e
+    finally:
+        MyTable.delete_table()
+        MyOtherTable.delete_table()
 
-    selector = Select(MyOtherTable).leftjoin(MyTable)
-    item0 = MyOtherTable.select(auto_join=False)[0]
-    assert_equal(item0.name, "hola")
-    item1 = selector.fetch(auto_join=True)[0].MyTable
-    item2 = selector.fetch(auto_join=True)[0].MyOtherTable
-    assert_equal(item1.name, "hello")
-    assert_equal(item2.name, "hola")
-    assert_type(item0.ref, int)
-    assert_equal(item0.ref, item1.id)
-    assert_equal(item2.ref, item1)
-    assert_equal(id(item1), id(item2.ref))
+@test
+@uses_db
+def select_test():
+    try:
+        class MyTable(Resource):
+            name=VARCHAR(128)
+            def __str__(self):
+                return "(name={})".format(self.name)
+        class MyOtherTable(Resource):
+            name=VARCHAR(128)
+            ref=MyTable
+            def __str__(self):
+                return "(name={}, ref={})".format(self.name, self.ref)
+        MyOtherTable(
+            name="hola",
+            ref=MyTable(
+                name="hello"
+            )
+        ).insert()
+
+        selector = Select(MyOtherTable).leftjoin(MyTable)
+        item0 = MyOtherTable.select(auto_join=False)[0]
+        assert_equal(item0.name, "hola")
+        item1 = selector.fetch(auto_join=True)[0].MyTable
+        item2 = selector.fetch(auto_join=True)[0].MyOtherTable
+        assert_equal(item1.name, "hello")
+        assert_equal(item2.name, "hola")
+        assert_type(item0.ref, int)
+        assert_equal(item0.ref, item1.id)
+        assert_equal(item2.ref, item1)
+        assert_equal(id(item1), id(item2.ref))
+    except Exception as e:
+        raise e
+    finally:
+        MyTable.delete_table()
+        MyOtherTable.delete_table()
+
+@test
+@uses_db
+def enum_set_test():
+    try:
+        class MyTable(Resource):
+            enum_val = ENUM("HELLO", "BYE")
+            set_val = SET("WRITE", "READ")
+            def __str__(self):
+                return "(enum_val={}, set_val={})".format(self.enum_val, self.set_val)
+
+        ref=MyTable(
+            enum_val = "HELLO",
+            set_val = "WRITE,READ"
+        ).insert()
+        select_result = MyTable.select("FIND_IN_SET('READ', set_val) > 0")
+        assert_true(len(select_result) > 0)
+        assert_equal(select_result[0].enum_val, "HELLO")
+    except Exception as e:
+        raise e
+    finally:
+        MyTable.delete_table()
 
 run_test()
-
-for table in tables:
-    table.delete_table()

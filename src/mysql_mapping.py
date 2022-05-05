@@ -10,7 +10,7 @@ ProgrammingError = MySQLdb.connections.ProgrammingError
 cursor = None
 _sql_query_log = False
 
-config = {}
+db_config = {}
 
 def enable_sql_logging():
     global _sql_query_log
@@ -25,7 +25,7 @@ def uses_db(func):
     def manage_cursor(*args, **kwargs):
         global cursor
         if cursor is None:
-            connection = MySQLdb.connect(**config)
+            connection = MySQLdb.connect(**db_config)
             cursor = connection.cursor()
             return_val = func(*args, **kwargs)
             cursor.close()
@@ -386,7 +386,10 @@ def _create_table(table_name, column_list):
             raise Exception("\"id\" is a reserved field name")
         if isinstance(datatype, type) and issubclass(datatype, Resource):
             datatype = PRIMARY_KEY()
-        field_str += ", `{name}` {datatype} {extra}".format(name=name, datatype=datatype, extra=datatype.extra)
+        if datatype.virtual_col is not None:
+            field_str += ", `{name}` {datatype} AS({extra})".format(name=name, datatype=datatype, extra=datatype.virtual_col)
+        else:
+            field_str += ", `{name}` {datatype}".format(name=name, datatype=datatype)
     _db_execute("CREATE TABLE " + table_name + "(" + field_str + ");")
 
 def _compare_type(t1, t2):
@@ -400,7 +403,7 @@ def _table_equal(table, column_list):
         return False
     for row in table:
         if row[0] == 'id':
-            if row[1].casefold() != "BIGINT".casefold() or \
+            if (row[1].casefold() != "BIGINT".casefold() and row[1].casefold().startswith("BIGINT(20)")) or \
                 row[2] != "NO" or \
                 row[3] != "PRI" or \
                 row[4] != None or \
@@ -422,9 +425,10 @@ def _table_equal(table, column_list):
 def _make_type_from_desc(table, cls):
     class_dict = dict()
     val_list = None
-    val_access_list = [None] * (len(table) - 1)
-    counter = 0
-    for name, _, _, _, _, _ in table:
+    val_access_list = []
+    for name, _, _, _, _, extra in table:
+        if extra.strip() == "VIRTUAL GENERATED":
+            continue
         if name == "id":
             continue
         _add_accessors(class_dict, name)
@@ -432,14 +436,13 @@ def _make_type_from_desc(table, cls):
             val_list = "`{name}`".format(name=name)
         else:
             val_list += ", `{name}`".format(name=name)
-        val_access_list[counter] = name
-        counter += 1
+        val_access_list.append(name)
     _add_statements(class_dict, cls.__name__, val_list, val_access_list)
     def __init__template(self, **kwargs):
         Resource.__init__(self)
         for key, value in kwargs.items():
             if not key in val_access_list:
-                raise KeyError("{0} is not a valid database column name".format(key))
+                raise KeyError("{0} is not a valid table column name".format(key))
             if isinstance(value, type) and issubclass(value, Resource):
                 self.__setattr__("__" + key, value.id)
             else:
@@ -478,14 +481,14 @@ class _SQLtype():
     def __init__(self, type_name, extra=None):
         self.__type_name = type_name
         self.__amount = extra
-        self.extra = ""
+        self.virtual_col = None
     def __str__(self):
         if self.__amount is not None:
             return "{0}({1})".format(self.__type_name, self.__amount)
         else:
             return self.__type_name
-    def set_extra(self, extra):
-        self.extra = extra
+    def virtual_column(self, extra):
+        self.virtual_col = extra
         return self
 
 def CHAR(len):

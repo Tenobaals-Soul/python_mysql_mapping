@@ -8,13 +8,13 @@ __test_cases = []
 class TestAssertionFailedException(Exception):
     def __init__(self, message: str):
         caller = getframeinfo(stack()[2][0])
-        self.message = "in file {} line {} {}".format(caller.filename, caller.lineno, message)
+        self.message = "in file {} line {} by {}(): {}".format(caller.filename, caller.lineno, caller.function, message)
         super().__init__(self, self.message)
     
     def __str__(self):
         return self.message
 
-def test(test_method: Callable) -> None:
+def test(test_method: Callable or Type) -> None:
     __test_cases.append(test_method)
 
 def assert_true(val: bool):
