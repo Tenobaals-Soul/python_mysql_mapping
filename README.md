@@ -1,4 +1,4 @@
-# Quick mysql_mapping.py rundown:
+# mysql_mapping.py:
 
 ## setup
 
@@ -125,3 +125,43 @@ data = selector.fetch()
 print(data[0].o.status) # PENDING
 print(data[0].e.fname) # Fred
 ```
+
+## automatic joins
+
+When creating a table, it is possible to use an other table as a column.
+```python
+class User(Resource):
+    # here goes your data
+    def __str__(self):
+        return "<a user object with id %s>" % self.id
+
+class Chat(Resource):
+    # here goes your data
+    def __str__(self):
+        return "<a chat object with id %s>" % self.id
+
+class UserChatRelation(Resource):
+    user=User
+    chat=Chat
+    def __str__(self):
+        return "<a user chat relation object with id %s and %s %s>" % (self.id, self.user, self.chat)
+```
+The table `UserChatRelation` now has three columns, the first one is the id of the relation and the primary key. The second and third are the primary keys of the `User` and `Chat` table.  
+Usually to join them, a selector had to be constructed:
+```python
+my_selector = Select(UserChatRelation)\
+    .join(User, "User.id = UserChatRelation.user")\
+    .join(User, "Chat.id = UserChatRelation.chat")
+data = my_selector.fetch()[0]
+print(data.User) # <a user object with id 11>
+print(data.Chat) # <a chat object with id 12>
+print(data.UserChatRelation) 
+# <a user chat relation object with id 1 and 11 12>"
+```
+As a result we get a list of `mysql_mapping._JoinResult` objects. Every item has the fields `.UserChatRelation`, `.User` and `.Char`. That is a bit complicated to work with. But there is an other way to join such a thing. The `Select.fetch()` as well as the `Resource.select()` method, have an option called "auto_join". It is a keyword only argument and should be a boolean. It is set to False by standart.
+```python
+data = UserChatRelation.select(auto_join=True)[0]
+
+print(data) # <a user chat relation object with id 1 and <a user object with id 11> <a chat object with id 12>>
+```
+Now instead of the ids of the other objects, the objects themself are in the fields.
