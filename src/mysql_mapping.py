@@ -37,13 +37,24 @@ def uses_db(func):
         return return_val
     return manage_cursor
 
+def _smort_decode(src):
+    return src.decode("utf-8") if isinstance(src, bytes) else src
+
+def _format(query, *args):
+    format_list = tuple([_smort_decode(cursor.connection.escape(arg)) for arg in args])
+    return query % format_list
+
 @uses_db
-def _db_execute(query, *args):
+def _db_execute(query: str, *args):
     global _sql_query_log
+    query = query.rstrip(" ").rstrip(";").rstrip(" ") + ";"
     args = tuple([(item.id if isinstance(item, Resource) else item) for item in args])
     cursor.execute(query, args)
     if _sql_query_log:
-        print(cursor._last_executed.decode("utf-8"))
+        try:
+            print("[SQLLOG]", cursor._last_executed.decode("utf-8"))
+        except Exception:
+            print("[SQLLOG]", _format(query, *args))
     data = cursor.fetchall()
     return data
 
@@ -135,7 +146,7 @@ class Select():
                                 data = None
                     else:
                         data = data_row[current_index]
-                    item.__setattr__(val_access_list[i], data)
+                    item.__setattr__("__" + val_access_list[i], data)
                     current_index += 1
                 item._set_id(item_id)
                 output.__setattr__(out_name, item)
@@ -346,6 +357,7 @@ def _add_statements(class_dict, table_name, val_list, val_access_list):
         data = cls._selector.fetch(where_clause, *args, auto_join=auto_join)
         out_list = [item.__getattribute__(cls.__name__) for item in data]
         return out_list
+    insert_string = "INSERT INTO {0}({1}) VALUES(%s{2});".format(table_name, val_list, ", %s" * (len(val_access_list) - 1))
     @uses_db
     def insert_template(self):
         values = [None] * len(val_access_list)
@@ -355,7 +367,7 @@ def _add_statements(class_dict, table_name, val_list, val_access_list):
                 if values[i].id == 0:
                     values[i].insert()
                 values[i] = values[i].id
-        _db_execute("INSERT INTO {0}({1}) VALUES(%s{2});".format(table_name, val_list, ", %s" * (len(values) - 1)), *tuple(values))
+        _db_execute(insert_string, *tuple(values))
         self._id = _db_execute("SELECT LAST_INSERT_ID();")[0][0]
         type(self)._loaded_items[self._id] = self
         return self

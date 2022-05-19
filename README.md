@@ -9,7 +9,7 @@ from mysql_mapping import *
 ```
 
 The next step is, to set important setup data. When importing, a dictionary called "db_setup" is imported. Here you can set the database name, the user and the password.
-```
+```python
 db_config["host"] = "127.0.0.1"
 db_config["user"] = "my_user"
 db_config["password"] = "my_original_passwort_that_I_totally_not_pushed_to_github"

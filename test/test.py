@@ -9,6 +9,7 @@ db_config["host"] = "127.0.0.1"
 db_config["user"] = "root"
 db_config["password"] = "empty"
 db_config["database"] = "python_mysql_mapping_test"
+enable_sql_logging()
 
 @test
 @uses_db
@@ -31,11 +32,12 @@ def insert_test():
                 name="hello"
             )
         ).insert()
-    except Exception as e:
-        raise e
-    finally:
         MyTable.delete_table()
         MyOtherTable.delete_table()
+    except Exception as e:
+        MyTable.delete_table()
+        MyOtherTable.delete_table()
+        raise e
 
 @test
 @uses_db
@@ -68,11 +70,12 @@ def select_test():
         assert_equal(item0.ref, item1.id)
         assert_equal(item2.ref, item1)
         assert_equal(id(item1), id(item2.ref))
-    except Exception as e:
-        raise e
-    finally:
         MyTable.delete_table()
         MyOtherTable.delete_table()
+    except Exception as e:
+        MyTable.delete_table()
+        MyOtherTable.delete_table()
+        raise e
 
 @test
 @uses_db
@@ -91,9 +94,30 @@ def enum_set_test():
         select_result = MyTable.select("FIND_IN_SET('READ', set_val) > 0")
         assert_true(len(select_result) > 0)
         assert_equal(select_result[0].enum_val, "HELLO")
-    except Exception as e:
-        raise e
-    finally:
         MyTable.delete_table()
+    except Exception as e:
+        MyTable.delete_table()
+        raise e
+
+@test
+@uses_db
+def update_test():
+    try:
+        class MyTable(Resource):
+            name = VARCHAR(128)
+
+        ref=MyTable().insert()
+        ref.name = "Fred"
+        assert_equal(ref.name, "Fred")
+        assert_equal(MyTable.select()[0].name, "Fred")
+        ref = MyTable.select()[0]
+        assert_equal(ref.name, "Fred")
+        ref.name = "Hanna"
+        assert_equal(ref.name, "Hanna")
+        assert_equal(MyTable.select()[0].name, "Hanna")
+        MyTable.delete_table()
+    except Exception as e:
+        MyTable.delete_table()
+        raise e
 
 run_test()

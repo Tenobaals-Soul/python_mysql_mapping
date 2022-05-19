@@ -49,7 +49,9 @@ def run_test():
             print("[Test {}/{} failed with exception]".format(tests_passed, len(__test_cases)))
             os.write(1, b"\033[91m[ERROR]\033[0m")
             print(e)
-    if tests_passed == len(__test_cases):
+    if len(__test_cases) == 0:
+        message = "there were no test"
+    elif tests_passed == len(__test_cases):
         message = "great job!"
     elif tests_passed / len(__test_cases) >= 0.8 or (tests_passed + 1 == len(__test_cases) and len(__test_cases) > 1):
         message = "close one, you can do it!"
