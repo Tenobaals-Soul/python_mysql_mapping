@@ -15,12 +15,14 @@ enable_sql_logging()
 @uses_db
 def insert_test():
     try:
-        class MyTable(Resource):
+        @resource
+        class MyTable():
             name=VARCHAR(128)
             enum_val = ENUM("HELLO", "BYE")
             def __str__(self):
                 return "(name={})".format(self.name)
-        class MyOtherTable(Resource):
+        @resource
+        class MyOtherTable():
             name=VARCHAR(128)
             ref=MyTable
             def __str__(self):
@@ -43,11 +45,13 @@ def insert_test():
 @uses_db
 def select_test():
     try:
-        class MyTable(Resource):
+        @resource
+        class MyTable():
             name=VARCHAR(128)
             def __str__(self):
                 return "(name={})".format(self.name)
-        class MyOtherTable(Resource):
+        @resource
+        class MyOtherTable():
             name=VARCHAR(128)
             ref=MyTable
             def __str__(self):
@@ -81,7 +85,8 @@ def select_test():
 @uses_db
 def enum_set_test():
     try:
-        class MyTable(Resource):
+        @resource
+        class MyTable():
             enum_val = ENUM("HELLO", "BYE")
             set_val = SET("WRITE", "READ")
             def __str__(self):
@@ -103,7 +108,8 @@ def enum_set_test():
 @uses_db
 def update_test():
     try:
-        class MyTable(Resource):
+        @resource
+        class MyTable():
             name = VARCHAR(128)
 
         ref=MyTable().insert()

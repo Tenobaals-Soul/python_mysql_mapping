@@ -48,7 +48,7 @@ def _format(query, *args):
 def _db_execute(query: str, *args):
     global _sql_query_log
     query = query.rstrip(" ").rstrip(";").rstrip(" ") + ";"
-    args = tuple([(item.id if isinstance(item, Resource) else item) for item in args])
+    args = tuple([(item.id if getattr(item, "__sql_table", None) is not None else item) for item in args])
     cursor.execute(query, args)
     if _sql_query_log:
         try:
@@ -65,7 +65,7 @@ class Select():
     def _immutable_err(self, field, val):
         raise Exception("Select is immutable")
 
-    def __init__(self, resource: Resource | Select, join_as: str = None, select_columns: str = None):
+    def __init__(self, resource: resource | Select, join_as: str = None, select_columns: str = None):
         if isinstance(resource, Select):
             self.__outputs = resource.__outputs
             self.__select_str = resource.__select_str
@@ -87,16 +87,16 @@ class Select():
             self.__setattr__ = self._immutable_err
             self.__limit = ""
 
-    def join(self, resource: Resource, join_as: str = None, join_on: str = "TRUE", select_columns: str = None):
+    def join(self, resource: resource, join_as: str = None, join_on: str = "TRUE", select_columns: str = None):
         return self._join("JOIN", resource, join_as, join_on, select_columns)
 
-    def leftjoin(self, resource: Resource, join_as: str = None, join_on: str = "TRUE", select_columns: str = None):
+    def leftjoin(self, resource: resource, join_as: str = None, join_on: str = "TRUE", select_columns: str = None):
         return self._join("LEFT JOIN", resource, join_as, join_on, select_columns)
 
-    def rightjoin(self, resource: Resource, join_as: str = None, join_on: str = "TRUE", select_columns: str = None):
+    def rightjoin(self, resource: resource, join_as: str = None, join_on: str = "TRUE", select_columns: str = None):
         return self._join("RIGHT JOIN", resource, join_as, join_on, select_columns)
 
-    def _join(self, join_type: str, resource: Resource, join_as: str, join_on: str, select_columns: str = None):
+    def _join(self, join_type: str, resource: resource, join_as: str, join_on: str, select_columns: str = None):
         if join_as is None:
             join_as = resource.__name__
         new_select = Select(self)
@@ -136,7 +136,7 @@ class Select():
                 item = out_type()
                 val_access_list = out_type.get_val_access_fields()
                 for i in range(len(val_access_list)):
-                    if auto_join and isinstance(out_type._column_list[i][1], type) and issubclass(out_type._column_list[i][1], Resource):
+                    if auto_join and isinstance(out_type._column_list[i][1], type) and getattr(out_type._column_list[i][1], "__sql_table", None) is not None:
                         data = out_type._column_list[i][1]._loaded_items.get(data_row[current_index])
                         if data is None:
                             data = out_type._column_list[i][1].select("id = %s", data_row[current_index])
@@ -250,7 +250,7 @@ def _t_missing(table, items):
     for key, val in items:
         if isinstance(val, _SQLtype) and key not in kwargs.keys():
             to_ret.append((str(key), str(val).lower(), "YES", "", None, ""))
-        elif isinstance(val, type) and issubclass(val, Resource):
+        elif isinstance(val, type) and getattr(val, "__sql_table", None) is not None:
             to_ret.append((str(key), str(PRIMARY_KEY()).lower(), "YES", "", None, ""))
     return to_ret
 
@@ -262,83 +262,40 @@ def _t_type(table, items):
     for key, val in items:
         if isinstance(val, _SQLtype) and key in kwargs.keys() and not _compare_type(kwargs[key], val):
             to_ret.append((str(key), str(val).lower(), "YES", "", None, ""))
-        elif isinstance(val, type) and issubclass(val, Resource)and key in kwargs.keys() and not _compare_type(kwargs[key], PRIMARY_KEY()):
+        elif isinstance(val, type) and getattr(val, "__sql_table", None) is not None and key in kwargs.keys() and not _compare_type(kwargs[key], PRIMARY_KEY()):
             to_ret.append((str(key), str(PRIMARY_KEY()).lower(), "YES", "", None, ""))
     return to_ret
 
-class Resource:
-    _selector = None
-    def __init__(self):
-        if type(self) == Resource:
-            raise Exception("can not create object of type Resource")
-        self._id = 0
-    def __init_subclass__(cls):
-        super().__init_subclass__()
-        column_list = []
-        for key, val in cls.__dict__.items():
-            if isinstance(val, _SQLtype) or (isinstance(val, type) and issubclass(val, Resource)):
-                column_list.append((key, val))
-        cls._column_list = column_list
-        table_name = cls.__name__
-        try:
-            table = _db_execute("DESCRIBE {0};".format(table_name))
-            if not _table_equal(table, column_list):
-                print("\033[91mTable \"{table_name}\" does not match definition of class:".format(table_name=table_name))
-                print(_make_table(("Field", "Type", "Null", "Key", "Default", "Extra"), table))
-                print("missing columns:")
-                print(_make_table(("Field", "Type", "Null", "Key", "Default", "Extra"), _t_missing(table, cls.__dict__.items())))
-                print("columns with wrong type:")
-                print(_make_table(("Field", "Type", "Null", "Key", "Default", "Extra"), _t_type(table, cls.__dict__.items())))
-                print("recreate table \"{0}\"? (this will delete its content)\033[0m [Y/n] ".format(table_name), end="")
-                inp = input()
-                if inp == "n":
-                    print("Programm terminated. It is not safe to work with an unknown database table.")
-                    exit(0)
-                _db_execute("DROP TABLE {0};".format(table_name))
-                _create_table(table_name, column_list)
-                table = _db_execute("DESCRIBE {0};".format(table_name))
-        except ProgrammingError:
+def resource(cls: type):
+    column_list = []
+    for key, val in cls.__dict__.items():
+        if isinstance(val, _SQLtype) or (isinstance(val, type) and getattr(val, "__sql_table", None) is not None):
+            column_list.append((key, val))
+    cls._column_list = column_list
+    table_name = cls.__name__
+    try:
+        table = _db_execute("DESCRIBE {0};".format(table_name))
+        if not _table_equal(table, column_list):
+            print("\033[91mTable \"{table_name}\" does not match definition of class:".format(table_name=table_name))
+            print(_make_table(("Field", "Type", "Null", "Key", "Default", "Extra"), table))
+            print("missing columns:")
+            print(_make_table(("Field", "Type", "Null", "Key", "Default", "Extra"), _t_missing(table, cls.__dict__.items())))
+            print("columns with wrong type:")
+            print(_make_table(("Field", "Type", "Null", "Key", "Default", "Extra"), _t_type(table, cls.__dict__.items())))
+            print("recreate table \"{0}\"? (this will delete its content)\033[0m [Y/n] ".format(table_name), end="")
+            inp = input()
+            if inp == "n":
+                print("Programm terminated. It is not safe to work with an unknown database table.")
+                exit(0)
+            _db_execute("DROP TABLE {0};".format(table_name))
             _create_table(table_name, column_list)
             table = _db_execute("DESCRIBE {0};".format(table_name))
-        _make_type_from_desc(table, cls)
-
-    @property
-    def id(self):
-        return self._id
-
-    def _set_id(self, value):
-        self._id = value
-
-    @classmethod
-    @uses_db
-    def select(cls, where_clause, *args, auto_join=False) -> List[Any]:
-        raise Exception("can not operate on class Resource")
-
-    @uses_db
-    def insert(self):
-        pass
-
-    @uses_db
-    def delete(self):
-        pass
-
-    @uses_db
-    def push(self):
-        pass
-
-    @classmethod
-    def selector(cls, name=None) -> Select:
-        if name is not None:
-            if not isinstance(name, str):
-                raise TypeError()
-            return Select(cls, name)
-        else:
-            return cls._selector
-    
-    @classmethod
-    @uses_db
-    def delete_table(cls):
-        _db_execute("DROP TABLE {}".format(cls.__name__))
+    except ProgrammingError:
+        _create_table(table_name, column_list)
+        table = _db_execute("DESCRIBE {0};".format(table_name))
+    _make_type_from_desc(table, cls)
+    setattr(cls, "__sql_table", cls.__name__)
+    return cls
 
 def _add_accessors(cls_dict, name):
     @uses_db
@@ -353,17 +310,17 @@ def _add_accessors(cls_dict, name):
 def _add_statements(class_dict, table_name, val_list, val_access_list):
     @classmethod
     @uses_db
-    def select_template(cls, where_clause = "TRUE", *args, auto_join=False):
+    def select(cls, where_clause = "TRUE", *args, auto_join=False):
         data = cls._selector.fetch(where_clause, *args, auto_join=auto_join)
         out_list = [item.__getattribute__(cls.__name__) for item in data]
         return out_list
     insert_string = "INSERT INTO {0}({1}) VALUES(%s{2});".format(table_name, val_list, ", %s" * (len(val_access_list) - 1))
     @uses_db
-    def insert_template(self):
+    def insert(self):
         values = [None] * len(val_access_list)
         for i in range(len(val_access_list)):
             values[i] = self.__getattribute__("__" + val_access_list[i])
-            if isinstance(values[i], Resource):
+            if getattr(values[i], "__sql_table", None) is not None:
                 if values[i].id == 0:
                     values[i].insert()
                 values[i] = values[i].id
@@ -372,31 +329,34 @@ def _add_statements(class_dict, table_name, val_list, val_access_list):
         type(self)._loaded_items[self._id] = self
         return self
     @uses_db
-    def delete_template(self):
+    def delete(self):
         _db_execute("DELETE FROM {0} WHERE id = %s;".format(table_name), self.id)
         self._id = 0
         del type(self)._loaded_items[self._id]
     """
     @uses_db
-    def push_template(self, push_on=("id")):
+    def push (self, push_on=("id")):
         for item in push_on:
             if item not in self.selector().:
                 raise TypeError("push_on can only contain ")
-        if len(select_template(type(self), "{}".format())):
+        if len(select (type(self), "{}".format())):
             pass
     """
-    class_dict["select"] = select_template
-    class_dict["insert"] = insert_template
-    class_dict["delete"] = delete_template
+    class_dict["select"] = select
+    class_dict["insert"] = insert
+    class_dict["delete"] = delete
+    class_dict["_id"] = 0
+    class_dict["_set_id"] = lambda self, val : setattr(self, "_id", val)
+    class_dict["id"] = property(lambda self : self._id)
     class_dict["_loaded_items"] = weakref.WeakValueDictionary()
-    #class_dict["push"] = push_template
+    #class_dict["push"] = push 
 
 def _create_table(table_name, column_list):
     field_str = "id BIGINT PRIMARY KEY AUTO_INCREMENT"
     for name, datatype in column_list:
         if name == "id":
             raise Exception("\"id\" is a reserved field name")
-        if isinstance(datatype, type) and issubclass(datatype, Resource):
+        if isinstance(datatype, type) and getattr(datatype, "__sql_table", None) is not None:
             datatype = PRIMARY_KEY()
         if datatype.virtual_col is not None:
             field_str += ", `{name}` {datatype} AS({extra})".format(name=name, datatype=datatype, extra=datatype.virtual_col)
@@ -425,7 +385,7 @@ def _table_equal(table, column_list):
             if row[0] not in kwargs:
                 return False
             if type(kwargs[row[0]]) == type:
-                if not issubclass(kwargs[row[0]], Resource):
+                if not getattr(kwargs[row[0]], "__sql_table", None) is not None:
                     return False
             elif not _compare_type(row[1], kwargs[row[0]]):
                 return False
@@ -450,17 +410,18 @@ def _make_type_from_desc(table, cls):
             val_list += ", `{name}`".format(name=name)
         val_access_list.append(name)
     _add_statements(class_dict, cls.__name__, val_list, val_access_list)
-    def __init__template(self, **kwargs):
-        Resource.__init__(self)
+    def __init__(self, **kwargs):
+        resource.__init__(self)
         for key, value in kwargs.items():
             if not key in val_access_list:
                 raise KeyError("{0} is not a valid table column name".format(key))
-            if isinstance(value, type) and issubclass(value, Resource):
+            if isinstance(value, type) and getattr(value, "__sql_table", None) is not None:
                 self.__setattr__("__" + key, value.id)
             else:
                 self.__setattr__("__" + key, value)
+    @classmethod
     @uses_db
-    def wipe_template(cls, where_clause=None, *args):
+    def wipe(cls, where_clause=None, *args):
         if where_clause is None:
             cls._loaded_items.clear()
             _db_execute("DELETE FROM {0};".format(cls.__name__))
@@ -470,19 +431,24 @@ def _make_type_from_desc(table, cls):
             for item in cls._loaded_items.items():
                 if cls.selector().fetchone("id = %s", item) is None:
                     del cls._loaded_items[item.id]
-    def __eq__template(self, item):
+    def __eq__(self, item):
         if type(self) != type(item):
             return False
         for access in val_access_list:
             if self.__getattribute__("__" + access) != item.__getattribute__("__" + access):
                 return False
         return True
-    class_dict["__init__"] = __init__template
-    class_dict["wipe"] = classmethod(wipe_template)
+    @classmethod
+    @uses_db
+    def delete_table(cls):
+        _db_execute("DROP TABLE {}".format(cls.__name__))
+    class_dict["__init__"] = __init__
+    class_dict["wipe"] = classmethod(wipe )
     class_dict["get_val_access_fields"] = lambda : tuple(val_access_list)
     class_dict["_selector"] = Select(cls)
-    class_dict["__eq__"] = __eq__template
-    for key, val in Resource.__dict__.items():
+    class_dict["__eq__"] = __eq__
+    class_dict["delete_table"] = delete_table
+    for key, val in resource.__dict__.items():
         if not key.startswith("__"):
             setattr(cls, key, val)
     for key, val in class_dict.items():
