@@ -35,6 +35,7 @@ def uses_db(func):
         else:
             return_val = func(*args, **kwargs)
         return return_val
+    manage_cursor.__name__ = func.__name__
     return manage_cursor
 
 def _smort_decode(src):
